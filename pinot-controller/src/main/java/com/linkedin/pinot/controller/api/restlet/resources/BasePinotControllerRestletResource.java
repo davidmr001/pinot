@@ -1,5 +1,6 @@
 package com.linkedin.pinot.controller.api.restlet.resources;
 
+import com.alibaba.fastjson.JSONObject;
 import com.linkedin.pinot.common.Utils;
 import com.linkedin.pinot.common.utils.CommonConstants.Helix.TableType;
 import com.linkedin.pinot.common.utils.NetUtil;
@@ -8,6 +9,7 @@ import com.linkedin.pinot.controller.helix.core.PinotHelixResourceManager;
 import java.util.Map;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.restlet.Response;
+import org.restlet.data.MediaType;
 import org.restlet.engine.header.Header;
 import org.restlet.engine.header.HeaderConstants;
 import org.restlet.representation.StringRepresentation;
@@ -116,6 +118,14 @@ public class BasePinotControllerRestletResource extends ServerResource {
   }
 
   public static StringRepresentation exceptionToStringRepresentation(Exception e) {
-    return new StringRepresentation(e.getMessage() + "\n" + ExceptionUtils.getStackTrace(e));
+    String errorMsg = e.getMessage() + "\n" + ExceptionUtils.getStackTrace(e);
+    JSONObject errorMsgInJson = getErrorMsgInJson(errorMsg);
+    return new StringRepresentation(errorMsgInJson.toJSONString(), MediaType.APPLICATION_JSON);
+  }
+
+  protected static JSONObject getErrorMsgInJson(String errorMsg) {
+    JSONObject errorMsgJson = new JSONObject();
+    errorMsgJson.put("ERROR", errorMsgJson);
+    return errorMsgJson;
   }
 }
