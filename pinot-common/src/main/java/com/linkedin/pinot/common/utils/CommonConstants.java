@@ -133,6 +133,8 @@ public class CommonConstants {
       public static final String INSTANCE_NAME = "instance.name";
       public static final String GROUP_ID_SUFFIX = "kafka.hlc.groupId";
       public static final String PARTITION_SUFFIX = "kafka.hlc.partition";
+      public static final String HOSTNAME_KEY = "hostname";
+      public static final String ADMIN_PORT_KEY = "adminPort";
     }
 
     public static enum TableType {

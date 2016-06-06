@@ -24,11 +24,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.linkedin.pinot.common.utils.CommonConstants;
 import com.linkedin.pinot.common.utils.StringUtil;
 
-
-/**
- * Sep 30, 2014
- */
-
 public class Instance {
 
   private final String instanceHost;
