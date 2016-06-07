@@ -1,250 +1,228 @@
 package com.linkedin.thirdeye.client.comparison;
 
-import static com.linkedin.thirdeye.client.comparison.TimeOnTimeConstants.ALL_BASELINE;
-import static com.linkedin.thirdeye.client.comparison.TimeOnTimeConstants.ALL_CURRENT;
-import static com.linkedin.thirdeye.client.comparison.TimeOnTimeConstants.BASELINE_VALUE;
-import static com.linkedin.thirdeye.client.comparison.TimeOnTimeConstants.CURRENT_VALUE;
-import static com.linkedin.thirdeye.client.comparison.TimeOnTimeConstants.DIMENSION_BASELINE;
-import static com.linkedin.thirdeye.client.comparison.TimeOnTimeConstants.DIMENSION_CURRENT;
-
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
-import java.util.TreeMap;
+import java.util.Set;
 
+import org.joda.time.DateTime;
+
+import com.google.common.collect.Range;
+import com.linkedin.thirdeye.api.TimeGranularity;
 import com.linkedin.thirdeye.client.MetricFunction;
-import com.linkedin.thirdeye.client.ThirdEyeRequest;
 import com.linkedin.thirdeye.client.ThirdEyeResponse;
+import com.linkedin.thirdeye.client.ThirdEyeResponseRow;
 import com.linkedin.thirdeye.client.comparison.Row.Builder;
 
 public class TimeOnTimeResponseParser {
 
-  private static final double MIN_CONTRIBUTION_PERCENT = 0.0001;
+  private ThirdEyeResponse baselineResponse;
+  private ThirdEyeResponse currentResponse;
+  private List<Range<DateTime>> baselineRanges;
+  private List<Range<DateTime>> currentRanges;
+  private TimeGranularity aggTimeGranularity;
+  private List<String> groupByDimensions;
 
-  public static Map<MetricFunction, Map<String, Map<String, Map<String, Double>>>> processGroupByDimensionResponse(
-      Map<ThirdEyeRequest, ThirdEyeResponse> queryResultMap) {
-    Map<MetricFunction, Map<String, Map<String, Map<String, Double>>>> metricGroupByDimensionData =
-        new HashMap<>();
+  private static String TIME_DIMENSION_JOINER_ESCAPED = "\\|";
+  private static String TIME_DIMENSION_JOINER = "|";
 
-    for (Entry<ThirdEyeRequest, ThirdEyeResponse> entry : queryResultMap.entrySet()) {
-      ThirdEyeRequest thirdEyeRequest = entry.getKey();
-      ThirdEyeResponse thirdEyeResponse = entry.getValue();
-      String requestReference = thirdEyeRequest.getRequestReference();
-      if (requestReference.startsWith(DIMENSION_BASELINE)) {
-        parseMetricGroupByDimensionResponse(metricGroupByDimensionData, thirdEyeRequest,
-            thirdEyeResponse, BASELINE_VALUE);
-      }
-      if (requestReference.startsWith(DIMENSION_CURRENT)) {
-        parseMetricGroupByDimensionResponse(metricGroupByDimensionData, thirdEyeRequest,
-            thirdEyeResponse, CURRENT_VALUE);
-      }
-    }
-    return metricGroupByDimensionData;
+  public TimeOnTimeResponseParser(ThirdEyeResponse baselineResponse,
+      ThirdEyeResponse currentResponse, List<Range<DateTime>> baselineRanges,
+      List<Range<DateTime>> currentRanges, TimeGranularity timeGranularity,
+      List<String> groupByDimensions) {
+    this.baselineResponse = baselineResponse;
+    this.currentResponse = currentResponse;
+    this.baselineRanges = baselineRanges;
+    this.currentRanges = currentRanges;
+    this.aggTimeGranularity = timeGranularity;
+    this.groupByDimensions = groupByDimensions;
   }
 
-  public static Map<MetricFunction, Map<String, Double>> processAggregateResponse(
-      Map<ThirdEyeRequest, ThirdEyeResponse> queryResultMap) {
-    // Map<metricFunction,Map<(baseline|current), Double>>>
-    Map<MetricFunction, Map<String, Double>> metricOnlyData = new HashMap<>();
-
-    for (Entry<ThirdEyeRequest, ThirdEyeResponse> entry : queryResultMap.entrySet()) {
-      ThirdEyeRequest thirdEyeRequest = entry.getKey();
-      ThirdEyeResponse thirdEyeResponse = entry.getValue();
-      String requestReference = thirdEyeRequest.getRequestReference();
-      if (ALL_BASELINE.equals(requestReference)) {
-        parseMetricOnlyResponse(metricOnlyData, thirdEyeResponse, BASELINE_VALUE);
-      }
-      if (ALL_CURRENT.equals(requestReference)) {
-        parseMetricOnlyResponse(metricOnlyData, thirdEyeResponse, CURRENT_VALUE);
-      }
+  List<Row> parseResponse() {
+    if (baselineResponse == null || currentResponse == null) {
+      return Collections.emptyList();
     }
-    return metricOnlyData;
-  }
-
-  public static void parseMetricOnlyResponse(Map<MetricFunction, Map<String, Double>> aggregateData,
-      ThirdEyeResponse thirdEyeResponse, String baselineOrCurrent) {
-    List<MetricFunction> metricFunctions = thirdEyeResponse.getMetricFunctions();
-    for (MetricFunction metricFunction : metricFunctions) {
-      Map<String, String> row = thirdEyeResponse.getRow(metricFunction, 0);
-      // TODO THIS DEPENDS STRICTLY ON THE ORDER OF THE KEYS RETURNED?
-      String baselineValue = row.values().iterator().next();
-      if (!aggregateData.containsKey(metricFunction)) {
-        aggregateData.put(metricFunction, new HashMap<String, Double>());
-      }
-      aggregateData.get(metricFunction).put(baselineOrCurrent, Double.parseDouble(baselineValue));
+    boolean hasGroupByDimensions = false;
+    if (groupByDimensions != null && groupByDimensions.size() > 0) {
+      hasGroupByDimensions = true;
     }
-  }
-
-  public static void parseMetricGroupByDimensionResponse(
-      Map<MetricFunction, Map<String, Map<String, Map<String, Double>>>> dimensionData,
-      ThirdEyeRequest thirdEyeRequest, ThirdEyeResponse thirdEyeResponse,
-      String BASELINE_OR_CURRENT) {
-    List<MetricFunction> metricFunctions = thirdEyeResponse.getMetricFunctions();
-    for (MetricFunction metricFunction : metricFunctions) {
-      Map<String, Map<String, Map<String, Double>>> dimensionNameMap =
-          dimensionData.get(metricFunction);
-      if (dimensionNameMap == null) {
-        dimensionNameMap = new TreeMap<>();
-        dimensionData.put(metricFunction, dimensionNameMap);
-      }
-      // we only group by at most 1 dimension
-      String dimensionName = thirdEyeRequest.getGroupBy().get(0);
-      Map<String, Map<String, Double>> dimensionValueMap = dimensionNameMap.get(dimensionName);
-      if (dimensionValueMap == null) {
-        dimensionValueMap = new TreeMap<>();
-        dimensionData.get(metricFunction).put(dimensionName, dimensionValueMap);
-      }
-      // one row for each group by
-      int rows = thirdEyeResponse.getNumRowsFor(metricFunction);
-      for (int i = 0; i < rows; i++) {
-        Map<String, String> row = thirdEyeResponse.getRow(metricFunction, i);
-        String dimensionValue = row.get(dimensionName);
-        if (!dimensionValueMap.containsKey(dimensionValue)) {
-          Map<String, Double> value = new TreeMap<>();
-          dimensionValueMap.put(dimensionValue, value);
-          dimensionValueMap.get(dimensionValue).put(BASELINE_VALUE, 0d);
-          dimensionValueMap.get(dimensionValue).put(CURRENT_VALUE, 0d);
-        }
-        Double metricValue = Double.parseDouble(row.get(metricFunction.toString()));
-        dimensionValueMap.get(dimensionValue).put(BASELINE_OR_CURRENT, metricValue);
-      }
-    }
-  }
-
-  public static Row parseAggregationOnlyResponse(TimeOnTimeComparisonRequest comparisonRequest,
-      Map<ThirdEyeRequest, ThirdEyeResponse> queryResultMap) {
-    Map<MetricFunction, Map<String, Double>> metricOnlyData =
-        TimeOnTimeResponseParser.processAggregateResponse(queryResultMap);
-
-    Row.Builder rowBuilder = new Row.Builder();
-    rowBuilder.setBaselineStart(comparisonRequest.getBaselineStart());
-    rowBuilder.setBaselineEnd(comparisonRequest.getBaselineEnd());
-
-    rowBuilder.setCurrentStart(comparisonRequest.getCurrentStart());
-    rowBuilder.setCurrentEnd(comparisonRequest.getCurrentEnd());
-
-    for (Entry<MetricFunction, Map<String, Double>> entry : metricOnlyData.entrySet()) {
-      MetricFunction key = entry.getKey();
-      Map<String, Double> valueMap = entry.getValue();
-      rowBuilder.addMetric(key.getMetricName(), valueMap.get(BASELINE_VALUE),
-          valueMap.get(CURRENT_VALUE));
-    }
-    return rowBuilder.build();
-  }
-
-  public static List<Row> parseGroupByDimensionResponse(
-      TimeOnTimeComparisonRequest comparisonRequest,
-      Map<ThirdEyeRequest, ThirdEyeResponse> queryResultMap) {
-    Map<MetricFunction, Map<String, Double>> metricOnlyData =
-        TimeOnTimeResponseParser.processAggregateResponse(queryResultMap);
-    // we retrieve only top 25 group by values for each dimension, so we compute the sum of
-    // retrieved
-    // values, in the end we add a explicit "OTHER" group in each dimension
-    Map<MetricFunction, Map<String, Map<String, Double>>> metricSumFromGroupByResponse =
-        new HashMap<>();
-    // Map<MetricFunction,Map<dimensionName,Map<dimensionValue,Map<(baseline|current), Double>>>>
-    Map<MetricFunction, Map<String, Map<String, Map<String, Double>>>> metricGroupByDimensionData =
-        TimeOnTimeResponseParser.processGroupByDimensionResponse(queryResultMap);
-    // we need a build for each dimensionName, dimensionValue combination
-    Map<String, Map<String, Row.Builder>> rowBuildersMap = new LinkedHashMap<>();
-    for (Entry<MetricFunction, Map<String, Map<String, Map<String, Double>>>> metricEntry : metricGroupByDimensionData
-        .entrySet()) {
-      MetricFunction metricFunction = metricEntry.getKey();
-      Map<String, Map<String, Map<String, Double>>> dimensionDataMap = metricEntry.getValue();
-      for (String dimensionName : dimensionDataMap.keySet()) {
-        Map<String, Map<String, Double>> map = dimensionDataMap.get(dimensionName);
-        for (String dimensionValue : map.keySet()) {
-          Map<String, Double> metricValueMap = map.get(dimensionValue);
-          // check if the dimension meets the MIN_CONTRIBUTION_PERCENT, if not this will get added
-          // to the OTHER category
-          double totalBaselineValue = metricOnlyData.get(metricFunction).get(BASELINE_VALUE);
-          double totalCurrentValue = metricOnlyData.get(metricFunction).get(BASELINE_VALUE);
-          Double baselineValue = metricValueMap.get(BASELINE_VALUE);
-          Double currentValue = metricValueMap.get(CURRENT_VALUE);
-          boolean meetsMinContributionThreshold =
-              (baselineValue > (totalBaselineValue * MIN_CONTRIBUTION_PERCENT))
-                  || (currentValue > totalCurrentValue * MIN_CONTRIBUTION_PERCENT);
-          if (!meetsMinContributionThreshold) {
-            continue;
-          }
-          Row.Builder rowBuilder = getRowBuilder(rowBuildersMap, dimensionName, dimensionValue);
-          rowBuilder.addMetric(metricFunction.getMetricName(), baselineValue, currentValue);
-          // compute for each dimension
-          if (!metricSumFromGroupByResponse.containsKey(metricFunction)) {
-            Map<String, Map<String, Double>> value = new HashMap<>();
-            metricSumFromGroupByResponse.put(metricFunction, value);
-          }
-          if (!metricSumFromGroupByResponse.get(metricFunction).containsKey(dimensionName)) {
-            Map<String, Double> value = new HashMap<>();
-            value.put(BASELINE_VALUE, 0d);
-            value.put(CURRENT_VALUE, 0d);
-            metricSumFromGroupByResponse.get(metricFunction).put(dimensionName, value);
-          }
-          Map<String, Double> metricSum =
-              metricSumFromGroupByResponse.get(metricFunction).get(dimensionName);
-          metricSum.put(BASELINE_VALUE, metricSum.get(BASELINE_VALUE) + baselineValue);
-          metricSum.put(CURRENT_VALUE, metricSum.get(CURRENT_VALUE) + currentValue);
-        }
-      }
+    boolean hasGroupByTime = false;
+    if (aggTimeGranularity != null) {
+      hasGroupByTime = true;
     }
 
-    for (MetricFunction metricFunction : metricSumFromGroupByResponse.keySet()) {
-      Map<String, Map<String, Double>> map = metricSumFromGroupByResponse.get(metricFunction);
-      for (String dimensionName : map.keySet()) {
-        Map<String, Double> valueMap = map.get(dimensionName);
+    Map<String, ThirdEyeResponseRow> baselineResponseMap;
+    Map<String, ThirdEyeResponseRow> currentResponseMap;
 
-        double baselineValue =
-            metricOnlyData.get(metricFunction).get(BASELINE_VALUE) - valueMap.get(BASELINE_VALUE);
-        double currentValue =
-            metricOnlyData.get(metricFunction).get(CURRENT_VALUE) - valueMap.get(CURRENT_VALUE);
-        double totalBaselineValue = metricOnlyData.get(metricFunction).get(BASELINE_VALUE);
-        double totalCurrentValue = metricOnlyData.get(metricFunction).get(BASELINE_VALUE);
-        boolean meetsMinContributionThreshold =
-            (baselineValue > (totalBaselineValue * MIN_CONTRIBUTION_PERCENT))
-                || (currentValue > totalCurrentValue * MIN_CONTRIBUTION_PERCENT);
-
-        // don't add OTHER group if top 25 covered all possible dimensions or if it does not meet
-        // minimum threshold
-        if (meetsMinContributionThreshold) {
-          Builder rowBuilder = getRowBuilder(rowBuildersMap, dimensionName, "other");
-          rowBuilder.addMetric(metricFunction.getMetricName(), baselineValue, currentValue);
-        }
-      }
-    }
     List<Row> rows = new ArrayList<>();
-    for (Map<String, Builder> dimensionValueMap : rowBuildersMap.values()) {
-      for (Row.Builder builder : dimensionValueMap.values()) {
-        builder.setBaselineStart(comparisonRequest.getBaselineStart());
-        builder.setBaselineEnd(comparisonRequest.getBaselineEnd());
+    if (hasGroupByTime) {
 
-        builder.setCurrentStart(comparisonRequest.getCurrentStart());
-        builder.setCurrentEnd(comparisonRequest.getCurrentEnd());
+      int numTimeBuckets = baselineRanges.size();
 
-        Row row = builder.build();
-        rows.add(row);
+      if (hasGroupByDimensions) {
+        // group by time only //tabular
+        baselineResponseMap = createContributorResponseMap(baselineResponse);
+        currentResponseMap = createContributorResponseMap(currentResponse);
+
+        Set<String> timeDimensionValues = new HashSet<>();
+        timeDimensionValues.addAll(baselineResponseMap.keySet());
+        timeDimensionValues.addAll(currentResponseMap.keySet());
+        Set<String> dimensionValues = new HashSet<>();
+        for (String timeDimensionValue : timeDimensionValues) {
+          dimensionValues.add(timeDimensionValue.split(TIME_DIMENSION_JOINER_ESCAPED)[1]);
+        }
+
+        String dimensionName = baselineResponse.getGroupKeyColumns().get(1);
+
+        for (String dimension : dimensionValues) {
+          for (int timeBucketId = 0; timeBucketId < numTimeBuckets; timeBucketId++) {
+            Range<DateTime> baselineTimeRange = baselineRanges.get(timeBucketId);
+            Range<DateTime> currentTimeRange = currentRanges.get(timeBucketId);
+
+            //compute the time|dimension key
+            String baselineTimeDimensionValue = timeBucketId + TIME_DIMENSION_JOINER + dimension;
+            String currentTimeDimensionValue = timeBucketId + TIME_DIMENSION_JOINER + dimension;
+
+            ThirdEyeResponseRow baselineRow = baselineResponseMap.get(baselineTimeDimensionValue);
+            ThirdEyeResponseRow currentRow = currentResponseMap.get(currentTimeDimensionValue);
+
+            Row.Builder builder = new Row.Builder();
+            builder.setBaselineStart(baselineTimeRange.lowerEndpoint());
+            builder.setBaselineEnd(baselineTimeRange.upperEndpoint());
+            builder.setCurrentStart(currentTimeRange.lowerEndpoint());
+            builder.setCurrentEnd(currentTimeRange.upperEndpoint());
+
+            builder.setDimensionName(dimensionName);
+            builder.setDimensionValue(dimension);
+
+            addMetric(baselineRow, currentRow, builder);
+
+            Row row = builder.build();
+            rows.add(row);
+          }
+        }
+
+      } else {
+        // group by time only //tabular
+        baselineResponseMap = createTabularResponseMap(baselineResponse);
+        currentResponseMap = createTabularResponseMap(currentResponse);
+
+        for (int timeBucketId = 0; timeBucketId < numTimeBuckets; timeBucketId++) {
+          Range<DateTime> baselineTimeRange = baselineRanges.get(timeBucketId);
+          ThirdEyeResponseRow baselineRow =
+              baselineResponseMap.get(String.valueOf(timeBucketId));
+
+          Range<DateTime> currentTimeRange = currentRanges.get(timeBucketId);
+          ThirdEyeResponseRow currentRow = currentResponseMap.get(String.valueOf(timeBucketId));
+
+          Row.Builder builder = new Row.Builder();
+          builder.setBaselineStart(baselineTimeRange.lowerEndpoint());
+          builder.setBaselineEnd(baselineTimeRange.upperEndpoint());
+          builder.setCurrentStart(currentTimeRange.lowerEndpoint());
+          builder.setCurrentEnd(currentTimeRange.upperEndpoint());
+
+          addMetric(baselineRow, currentRow, builder);
+          Row row = builder.build();
+          rows.add(row);
+        }
+      }
+    } else {
+      // no break down by time
+      if (hasGroupByDimensions) {
+        // group by dimensions only //heatmap
+        baselineResponseMap = createHeatmapResponseMap(baselineResponse);
+        currentResponseMap = createHeatmapResponseMap(currentResponse);
+
+        String dimensionName = baselineResponse.getGroupKeyColumns().get(0);
+
+        Set<String> dimensionValues = new HashSet<>();
+        dimensionValues.addAll(baselineResponseMap.keySet());
+        dimensionValues.addAll(currentResponseMap.keySet());
+
+        for (String dimensionValue : dimensionValues) {
+          Row.Builder builder = new Row.Builder();
+          builder.setBaselineStart(baselineRanges.get(0).lowerEndpoint());
+          builder.setBaselineEnd(baselineRanges.get(0).upperEndpoint());
+          builder.setCurrentStart(currentRanges.get(0).lowerEndpoint());
+          builder.setCurrentEnd(currentRanges.get(0).upperEndpoint());
+
+          builder.setDimensionName(dimensionName);
+          builder.setDimensionValue(dimensionValue);
+
+          ThirdEyeResponseRow baselineRow = baselineResponseMap.get(dimensionValue);
+          ThirdEyeResponseRow currentRow = currentResponseMap.get(dimensionValue);
+
+          addMetric(baselineRow, currentRow, builder);
+
+          Row row = builder.build();
+          rows.add(row);
+        }
+
+      } else {
+        // no group by
       }
     }
+
     return rows;
   }
 
-  private static Builder getRowBuilder(Map<String, Map<String, Builder>> rowBuildersMap,
-      String dimensionName, String dimensionValue) {
-    Map<String, Builder> map = rowBuildersMap.get(dimensionName);
-    if (map == null) {
-      map = new LinkedHashMap<>();
-      rowBuildersMap.put(dimensionName, map);
+  private static Map<String, ThirdEyeResponseRow> createContributorResponseMap(
+      ThirdEyeResponse thirdEyeResponse) {
+    Map<String, ThirdEyeResponseRow> responseMap;
+    responseMap = new HashMap<>();
+    int numRows = thirdEyeResponse.getNumRows();
+    for (int i = 0; i < numRows; i++) {
+      ThirdEyeResponseRow thirdEyeResponseRow = thirdEyeResponse.getRow(i);
+      responseMap.put(
+          thirdEyeResponseRow.getTimeBucketId() + "|" + thirdEyeResponseRow.getDimensions().get(0),
+          thirdEyeResponseRow);
     }
-    Builder builder = map.get(dimensionValue);
-    if (builder == null) {
-      builder = new Row.Builder();
-      builder.setDimensionName(dimensionName);
-      builder.setDimensionValue(dimensionValue);
-      map.put(dimensionValue, builder);
+    return responseMap;
+  }
+
+  private static Map<String, ThirdEyeResponseRow> createTabularResponseMap(
+      ThirdEyeResponse thirdEyeResponse) {
+    Map<String, ThirdEyeResponseRow> responseMap;
+    responseMap = new HashMap<>();
+    int numRows = thirdEyeResponse.getNumRows();
+    for (int i = 0; i < numRows; i++) {
+      ThirdEyeResponseRow thirdEyeResponseRow = thirdEyeResponse.getRow(i);
+      responseMap.put(String.valueOf(thirdEyeResponseRow.getTimeBucketId()), thirdEyeResponseRow);
     }
-    return builder;
+    return responseMap;
+  }
+
+  private static Map<String, ThirdEyeResponseRow> createHeatmapResponseMap(
+      ThirdEyeResponse thirdEyeResponse) {
+    Map<String, ThirdEyeResponseRow> responseMap;
+    responseMap = new HashMap<>();
+    int numRows = thirdEyeResponse.getNumRows();
+    for (int i = 0; i < numRows; i++) {
+      ThirdEyeResponseRow thirdEyeResponseRow = thirdEyeResponse.getRow(i);
+      responseMap.put(thirdEyeResponseRow.getDimensions().get(0), thirdEyeResponseRow);
+    }
+    return responseMap;
+  }
+
+  private void addMetric(ThirdEyeResponseRow baselineRow, ThirdEyeResponseRow currentRow, Builder builder) {
+
+    List<MetricFunction> metricFunctions = baselineResponse.getMetricFunctions();
+
+    for (int i = 0; i < metricFunctions.size(); i++) {
+      MetricFunction metricFunction = metricFunctions.get(i);
+      double baselineValue = 0;
+      if (baselineRow != null) {
+        baselineValue = baselineRow.getMetrics().get(i);
+      }
+      double currentValue = 0;
+      if (currentRow != null) {
+        currentValue = currentRow.getMetrics().get(i);
+      }
+      builder.addMetric(metricFunction.getMetricName(), baselineValue, currentValue);
+    }
   }
 
 }
