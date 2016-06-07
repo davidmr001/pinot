@@ -41,6 +41,7 @@ import com.linkedin.pinot.common.utils.KafkaStarterUtils;
  * Integration test that creates a Kafka broker, creates a Pinot cluster that consumes from Kafka and queries Pinot.
  *
  */
+@Test(enabled = false)  // jfim: This is covered by the hybrid cluster integration test
 public class RealtimeClusterIntegrationTest extends BaseClusterIntegrationTest {
   private static final Logger LOGGER = LoggerFactory.getLogger(RealtimeClusterIntegrationTest.class);
   private final File _tmpDir = new File("/tmp/RealtimeClusterIntegrationTest");
@@ -117,7 +118,7 @@ public class RealtimeClusterIntegrationTest extends BaseClusterIntegrationTest {
   }
 
   @Override
-  @Test
+  @Test(enabled = false)  // jfim: This is disabled because the multivalue one covers the same thing
   public void testGeneratedQueries() throws Exception {
     super.testGeneratedQueries();
   }
